@@ -1,0 +1,29 @@
+services:
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: n8n_transcriber
+    ports:
+      - "5678:5678"
+    environment:
+      - TZ=Europe/Moscow
+      - N8N_SECURE_COOKIE=false
+      - N8N_HOST=localhost
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=http
+    volumes:
+      - ./n8n_data:/home/node/.n8n
+      - ./data:/data
+    restart: unless-stopped
+
+  transcriber:
+    build: ./transcriber
+    container_name: whisper_transcriber_api
+    ports:
+      - "7861:7861"
+    environment:
+      - TZ=Europe/Moscow
+      - DATA_DIR=/data
+    volumes:
+      - ./data:/data
+      - ./models:/models
+    restart: unless-stopped
