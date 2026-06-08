@@ -14,6 +14,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from transcribe_original import transcribe, gpu_status
 
 DATA_DIR = Path(os.getenv("DATA_DIR", "/data"))
+PUBLIC_BASE_URL = os.getenv("TRANSCRIBER_PUBLIC_URL", "").rstrip("/")
 INPUT_DIR = DATA_DIR / "input"
 OUTPUT_DIR = DATA_DIR / "output"
 JOBS_DIR = DATA_DIR / "jobs"
@@ -29,6 +30,10 @@ running_jobs = set()
 
 def now_iso():
     return datetime.now().isoformat(timespec="seconds")
+
+
+def public_url(path: str) -> str:
+    return f"{PUBLIC_BASE_URL}{path}" if PUBLIC_BASE_URL else path
 
 
 def safe_name(name: str) -> str:
@@ -203,7 +208,12 @@ def create_job(
     }
     write_json(ready_file(job_id), job)
     update_status(job_id, job_id=job_id, status="queued", created_at=job["created_at"], input_path=str(p))
-    return {"job_id": job_id, "status": "queued"}
+    return {
+        "job_id": job_id,
+        "status": "queued",
+        "status_url": f"/jobs/{job_id}",
+        "public_status_url": public_url(f"/jobs/{job_id}"),
+    }
 
 
 @app.post("/upload")
@@ -234,7 +244,15 @@ async def upload_and_create_job(
     }
     write_json(ready_file(job_id), job)
     update_status(job_id, job_id=job_id, status="queued", created_at=job["created_at"], input_path=str(input_path))
-    return {"job_id": job_id, "status": "queued", "status_url": f"/jobs/{job_id}"}
+    return {
+        "job_id": job_id,
+        "status": "queued",
+        "status_url": f"/jobs/{job_id}",
+        "public_status_url": public_url(f"/jobs/{job_id}"),
+        "public_log_url": public_url(f"/jobs/{job_id}/log"),
+        "public_download_txt_url": public_url(f"/download/{job_id}/txt"),
+        "public_download_docx_url": public_url(f"/download/{job_id}/docx"),
+    }
 
 
 @app.get("/jobs/{job_id}")

@@ -3,13 +3,15 @@ services:
     image: n8nio/n8n:latest
     container_name: n8n_transcriber
     ports:
-      - "5678:5678"
+      - "${DOCKER_BIND_ADDRESS:-0.0.0.0}:${N8N_HOST_PORT:-5678}:5678"
     environment:
-      - TZ=Europe/Moscow
-      - N8N_SECURE_COOKIE=false
-      - N8N_HOST=localhost
+      - TZ=${TZ:-Europe/Moscow}
+      - N8N_SECURE_COOKIE=${N8N_SECURE_COOKIE:-false}
+      - N8N_HOST=${N8N_PUBLIC_HOST:-localhost}
       - N8N_PORT=5678
-      - N8N_PROTOCOL=http
+      - N8N_PROTOCOL=${N8N_PUBLIC_PROTOCOL:-http}
+      - N8N_EDITOR_BASE_URL=${N8N_PUBLIC_URL:-http://localhost:5678}
+      - WEBHOOK_URL=${N8N_PUBLIC_URL:-http://localhost:5678}
     volumes:
       - ./n8n_data:/home/node/.n8n
       - ./data:/data
@@ -19,10 +21,11 @@ services:
     build: ./transcriber
     container_name: whisper_transcriber_api
     ports:
-      - "7861:7861"
+      - "${DOCKER_BIND_ADDRESS:-0.0.0.0}:${TRANSCRIBER_HOST_PORT:-7861}:7861"
     environment:
-      - TZ=Europe/Moscow
+      - TZ=${TZ:-Europe/Moscow}
       - DATA_DIR=/data
+      - TRANSCRIBER_PUBLIC_URL=${TRANSCRIBER_PUBLIC_URL:-http://localhost:7861}
     volumes:
       - ./data:/data
       - ./models:/models

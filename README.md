@@ -30,6 +30,50 @@ run_all_cpu.bat
 
 CPU будет сильно медленнее. Для нормальной работы нужен GPU.
 
+## Настройка адреса, порта и домена
+
+Docker Compose берёт настройки из файла `.env`. Сначала создай его из примера:
+
+```bat
+copy .env.example .env
+```
+
+По умолчанию сервисы доступны так:
+
+```text
+http://localhost:5678      # n8n
+http://localhost:7861      # Transcriber API
+http://localhost:7861/health
+```
+
+Если хочешь оставить доступ только с этого компьютера, в `.env` укажи:
+
+```env
+DOCKER_BIND_ADDRESS=127.0.0.1
+N8N_PUBLIC_HOST=localhost
+N8N_PUBLIC_URL=http://localhost:5678
+TRANSCRIBER_PUBLIC_URL=http://localhost:7861
+```
+
+Если хочешь обращаться по домену `politech.space`, домен должен указывать на IP компьютера/сервера, где запущен Docker, а порты должны быть открыты в firewall/роутере. В `.env` укажи:
+
+```env
+DOCKER_BIND_ADDRESS=0.0.0.0
+N8N_PUBLIC_HOST=politech.space
+N8N_PUBLIC_URL=http://politech.space:5678
+TRANSCRIBER_PUBLIC_URL=http://politech.space:7861
+```
+
+После перезапуска Docker Compose внешние адреса будут:
+
+```text
+http://politech.space:5678        # n8n
+http://politech.space:7861        # Transcriber API
+http://politech.space:7861/health # проверка API
+```
+
+Если нужен адрес без порта, например `http://politech.space/health`, тогда нужен reverse proxy на 80 порту, который будет проксировать запросы в контейнер `transcriber:7861`.
+
 ## Быстрая проверка без n8n
 
 Открой:
@@ -110,6 +154,13 @@ http://transcriber:7861
 ```
 
 Не `localhost`. `localhost` внутри n8n — это сам контейнер n8n.
+
+Снаружи Docker используй публичный адрес из `.env`, например:
+
+```text
+POST http://localhost:7861/upload
+POST http://politech.space:7861/upload
+```
 
 ## Рекомендуемые модели
 
