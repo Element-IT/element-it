@@ -196,10 +196,9 @@ PLANFIX_FILE_URL_TIMEOUT=120
 ```text
 PLANFIX_RESULT_WEBHOOK_ID=<id входящего вебхука>
 PLANFIX_RESULT_WEBHOOK_URL=
-PLANFIX_RESULT_WEBHOOK_METHOD=MULTIPART
 PLANFIX_RESULT_FILE_FIELD=txt_file
 PLANFIX_RESULT_TIMEOUT=120
-PLANFIX_ALLOWED_API_HOSTS=planfix.ru,.planfix.ru
+PLANFIX_ALLOWED_RESULT_HOSTS=planfix.ru,.planfix.ru
 ```
 
 В Planfix создай или измени входящий вебхук:
@@ -238,7 +237,7 @@ https://<company>/webhook/file/<PLANFIX_RESULT_WEBHOOK_ID>
 }
 ```
 
-REST API остаётся резервным режимом, если `PLANFIX_RESULT_WEBHOOK_ID` и `PLANFIX_RESULT_WEBHOOK_URL` не заданы. Для него нужны `PLANFIX_API_TOKEN`, scope `file_add` и `comment_add`.
+Если не задан ни `PLANFIX_RESULT_WEBHOOK_ID`, ни полный `PLANFIX_RESULT_WEBHOOK_URL`, готовый TXT останется в локальном каталоге результата, а причина будет записана в статус задачи.
 
 ## Формат ready-задачи
 

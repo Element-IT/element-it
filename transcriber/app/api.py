@@ -15,7 +15,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 from urllib.error import HTTPError, URLError
-from urllib.parse import parse_qsl, quote, urlsplit, urlunsplit
+from urllib.parse import parse_qsl, urlsplit, urlunsplit
 from urllib.request import Request as UrlRequest, urlopen
 
 from fastapi import BackgroundTasks, FastAPI, UploadFile, File, Form, HTTPException, Request
@@ -45,17 +45,13 @@ PLANFIX_ALLOWED_FILE_URL_HOSTS = {
     if host.strip()
 }
 PLANFIX_FILE_URL_TIMEOUT = int(os.getenv("PLANFIX_FILE_URL_TIMEOUT", "120"))
-PLANFIX_ALLOWED_API_HOSTS = {
+PLANFIX_ALLOWED_RESULT_HOSTS = {
     host.strip().lower()
-    for host in os.getenv("PLANFIX_ALLOWED_API_HOSTS", "planfix.ru,.planfix.ru").split(",")
+    for host in os.getenv("PLANFIX_ALLOWED_RESULT_HOSTS", "planfix.ru,.planfix.ru").split(",")
     if host.strip()
 }
-PLANFIX_API_TOKEN = os.getenv("PLANFIX_API_TOKEN", "").strip()
-PLANFIX_API_BASE_URL = os.getenv("PLANFIX_API_BASE_URL", "").strip().rstrip("/")
-PLANFIX_API_TIMEOUT = int(os.getenv("PLANFIX_API_TIMEOUT", "120"))
 PLANFIX_RESULT_WEBHOOK_ID = os.getenv("PLANFIX_RESULT_WEBHOOK_ID", "").strip().strip("/")
 PLANFIX_RESULT_WEBHOOK_URL = os.getenv("PLANFIX_RESULT_WEBHOOK_URL", "").strip()
-PLANFIX_RESULT_WEBHOOK_METHOD = os.getenv("PLANFIX_RESULT_WEBHOOK_METHOD", "MULTIPART").strip().upper()
 PLANFIX_RESULT_FILE_FIELD = os.getenv("PLANFIX_RESULT_FILE_FIELD", "txt_file").strip() or "txt_file"
 PLANFIX_RESULT_TIMEOUT = int(os.getenv("PLANFIX_RESULT_TIMEOUT", "120"))
 TRUTHY = {"1", "true", "yes", "y", "on", "да"}
@@ -357,19 +353,7 @@ def normalize_planfix_domain(value: str) -> str:
     if "://" not in text:
         text = "https://" + text
     host = (urlsplit(text).hostname or "").lower()
-    return host if host_allowed(host, PLANFIX_ALLOWED_API_HOSTS) else ""
-
-
-def build_planfix_api_base_url(job: dict) -> str:
-    override_url = (job.get("planfix_api_base_url") or PLANFIX_API_BASE_URL).rstrip("/")
-    if override_url:
-        parts = urlsplit(override_url)
-        if parts.scheme == "https" and host_allowed(parts.hostname or "", PLANFIX_ALLOWED_API_HOSTS):
-            return override_url
-        return ""
-
-    domain = normalize_planfix_domain(job.get("company", ""))
-    return f"https://{domain}/rest" if domain else ""
+    return host if host_allowed(host, PLANFIX_ALLOWED_RESULT_HOSTS) else ""
 
 
 def looks_like_base64_key(key: str) -> bool:
@@ -769,7 +753,6 @@ def queue_planfix_transcription(input_path: Path, task_id: str, company: str, so
     job_id = uuid.uuid4().hex[:12]
     output_name = safe_name(f"{company}_{task_id}_{Path(source_name).stem}")[:120]
     project = first_present(payload, ["project", "project_id", "projectId", "Проект"])
-    comment = planfix_comment_metadata(payload)
     job = {
         "job_id": job_id,
         "input_path": str(input_path),
@@ -781,9 +764,6 @@ def queue_planfix_transcription(input_path: Path, task_id: str, company: str, so
         "source": "planfix_audio_parse",
         "planfix_task_id": task_id,
         "planfix_project": project,
-        "planfix_comment_id": comment["comment_id"],
-        "planfix_comment_text": comment["comment_text"],
-        "planfix_comment_author": comment["comment_author"],
         "planfix_source_name": source_name,
         "company": company,
         "created_at": now_iso(),
@@ -1033,138 +1013,19 @@ def encode_multipart_form(
     return body, boundary
 
 
-def planfix_api_json_request(request: UrlRequest) -> tuple[int, dict]:
-    try:
-        with urlopen(request, timeout=PLANFIX_API_TIMEOUT) as response:
-            status_code = response.status
-            raw_body = response.read().decode("utf-8", errors="replace")
-    except HTTPError as error:
-        raw_body = error.read(2000).decode("utf-8", errors="replace")
-        raise RuntimeError(f"Planfix REST API returned HTTP {error.code}: {raw_body[:1000]}") from error
-    except URLError as error:
-        raise RuntimeError(f"Planfix REST API is unavailable: {error.reason}") from error
-
-    try:
-        payload = json.loads(raw_body) if raw_body else {}
-    except json.JSONDecodeError as error:
-        raise RuntimeError(f"Planfix REST API returned invalid JSON: {raw_body[:1000]}") from error
-    if payload.get("result") == "fail":
-        raise RuntimeError(f"Planfix REST API error: {payload.get('error') or payload}")
-    return status_code, payload
-
-
-def send_planfix_result_rest(job: dict, txt_path: Path) -> dict:
-    api_base_url = build_planfix_api_base_url(job)
-    if not PLANFIX_API_TOKEN:
-        return {"sent": False, "mode": "rest", "reason": "PLANFIX_API_TOKEN is not configured"}
-    if not api_base_url:
-        return {"sent": False, "mode": "rest", "reason": "Planfix REST API base URL is invalid"}
-
-    task_id = str(job.get("planfix_task_id", "")).strip()
-    if not task_id:
-        return {"sent": False, "mode": "rest", "reason": "Planfix task number is missing"}
-
-    txt_path = Path(txt_path)
-    upload_name = planfix_result_file_name(job, txt_path)
-    try:
-        upload_body, boundary = encode_multipart_form(
-            {},
-            "file",
-            txt_path,
-            upload_name,
-        )
-        upload_request = UrlRequest(
-            f"{api_base_url}/file/?targetType=task",
-            data=upload_body,
-            headers={
-                "Authorization": f"Bearer {PLANFIX_API_TOKEN}",
-                "Content-Type": f"multipart/form-data; boundary={boundary}",
-                "Accept": "application/json",
-                "User-Agent": "whisper-transcriber/1.0",
-            },
-            method="POST",
-        )
-        upload_status, upload_response = planfix_api_json_request(upload_request)
-        file_id = upload_response.get("id")
-        if not isinstance(file_id, int):
-            raise RuntimeError(f"Planfix REST API did not return a file id: {upload_response}")
-
-        source_name = job.get("planfix_source_name") or txt_path.stem
-        comment_payload = {
-            "description": f"Расшифровка файла: {source_name}",
-            "files": [{"id": file_id}],
-        }
-        comment_request = UrlRequest(
-            f"{api_base_url}/task/{quote(task_id, safe='')}/comments/",
-            data=json.dumps(comment_payload, ensure_ascii=False).encode("utf-8"),
-            headers={
-                "Authorization": f"Bearer {PLANFIX_API_TOKEN}",
-                "Content-Type": "application/json; charset=utf-8",
-                "Accept": "application/json",
-                "User-Agent": "whisper-transcriber/1.0",
-            },
-            method="POST",
-        )
-        comment_status, comment_response = planfix_api_json_request(comment_request)
-        result = {
-            "sent": True,
-            "mode": "rest",
-            "file_id": file_id,
-            "comment_id": comment_response.get("id"),
-            "upload_status_code": upload_status,
-            "comment_status_code": comment_status,
-            "txt_file_name": txt_path.name,
-            "uploaded_file_name": ascii_multipart_filename(upload_name),
-            "txt_size_bytes": txt_path.stat().st_size,
-        }
-        planfix_log(
-            "TXT-файл загружен и прикреплен к комментарию Planfix",
-            **result,
-            task_id=task_id,
-            job_id=job.get("job_id"),
-        )
-        return result
-    except Exception as error:
-        result = {
-            "sent": False,
-            "mode": "rest",
-            "error": str(error),
-            "txt_file_name": txt_path.name,
-            "txt_size_bytes": txt_path.stat().st_size if txt_path.exists() else 0,
-        }
-        planfix_log(
-            "ошибка прикрепления TXT-файла через Planfix REST API",
-            **result,
-            task_id=task_id,
-            job_id=job.get("job_id"),
-        )
-        return result
-
-
 def build_planfix_result_webhook_url(job: dict) -> str:
     if PLANFIX_RESULT_WEBHOOK_URL:
         parts = urlsplit(PLANFIX_RESULT_WEBHOOK_URL)
-        if parts.scheme == "https" and host_allowed(parts.hostname or "", PLANFIX_ALLOWED_API_HOSTS):
+        if parts.scheme == "https" and host_allowed(parts.hostname or "", PLANFIX_ALLOWED_RESULT_HOSTS):
             return PLANFIX_RESULT_WEBHOOK_URL
         return ""
     if not PLANFIX_RESULT_WEBHOOK_ID:
         return ""
     domain = normalize_planfix_domain(job.get("company", ""))
-    webhook_kind = "file" if PLANFIX_RESULT_WEBHOOK_METHOD == "MULTIPART" else PLANFIX_RESULT_WEBHOOK_METHOD
-    return f"https://{domain}/webhook/{webhook_kind}/{PLANFIX_RESULT_WEBHOOK_ID}" if domain else ""
+    return f"https://{domain}/webhook/file/{PLANFIX_RESULT_WEBHOOK_ID}" if domain else ""
 
 
-def send_planfix_result_multipart_webhook(job: dict, txt_path: Path) -> dict:
-    if PLANFIX_RESULT_WEBHOOK_METHOD != "MULTIPART":
-        return {
-            "sent": False,
-            "mode": "multipart_webhook",
-            "reason": (
-                "PLANFIX_RESULT_WEBHOOK_METHOD must be MULTIPART. "
-                "A JSON webhook cannot receive a file-valued infoblock."
-            ),
-        }
-
+def send_planfix_result(job: dict, txt_path: Path) -> dict:
     webhook_url = build_planfix_result_webhook_url(job)
     if not webhook_url:
         return {
@@ -1180,9 +1041,6 @@ def send_planfix_result_multipart_webhook(job: dict, txt_path: Path) -> dict:
         "project": job.get("planfix_project", ""),
         "job_id": job.get("job_id", ""),
         "file_name": job.get("planfix_source_name", ""),
-        "source_comment_id": job.get("planfix_comment_id", ""),
-        "source_comment_author": job.get("planfix_comment_author", ""),
-        "source_comment_text": job.get("planfix_comment_text", ""),
     }
     try:
         body, boundary = encode_multipart_form(
@@ -1234,12 +1092,6 @@ def send_planfix_result_multipart_webhook(job: dict, txt_path: Path) -> dict:
             job_id=job.get("job_id"),
         )
         return result
-
-
-def send_planfix_result(job: dict, txt_path: Path) -> dict:
-    if PLANFIX_RESULT_WEBHOOK_ID or PLANFIX_RESULT_WEBHOOK_URL:
-        return send_planfix_result_multipart_webhook(job, txt_path)
-    return send_planfix_result_rest(job, txt_path)
 
 
 def process_job(job: dict):

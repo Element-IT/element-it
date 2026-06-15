@@ -1,5 +1,4 @@
 import importlib.util
-import json
 import os
 import sys
 import tempfile
@@ -115,75 +114,6 @@ class PlanfixCommentPayloadTests(unittest.TestCase):
         self.assertEqual(2, processed)
         self.assertEqual(["job-1", "job-2"], order)
 
-    def test_result_rest_uploads_txt_and_attaches_it_to_comment(self):
-        requests = []
-        responses = [
-            (200, {"result": "success", "id": 1245}),
-            (201, {"result": "success", "id": 77}),
-        ]
-
-        class Response:
-            def __init__(self, status, payload):
-                self.status = status
-                self.payload = payload
-
-            def __enter__(self):
-                return self
-
-            def __exit__(self, exc_type, exc, traceback):
-                return False
-
-            def read(self, size=-1):
-                return json.dumps(self.payload).encode("utf-8")
-
-        def fake_urlopen(request, timeout):
-            requests.append(request)
-            return Response(*responses[len(requests) - 1])
-
-        txt_path = Path(self.temp_dir.name) / "result.txt"
-        txt_path.write_text("transcribed text", encoding="utf-8")
-        original_urlopen = self.api.urlopen
-        original_token = self.api.PLANFIX_API_TOKEN
-        self.api.urlopen = fake_urlopen
-        self.api.PLANFIX_API_TOKEN = "test-token"
-        try:
-            result = self.api.send_planfix_result_rest(
-                {
-                    "job_id": "job-1",
-                    "planfix_task_id": "42",
-                    "planfix_source_name": "meeting.m4a",
-                    "company": "example.planfix.ru",
-                },
-                txt_path,
-            )
-        finally:
-            self.api.urlopen = original_urlopen
-            self.api.PLANFIX_API_TOKEN = original_token
-
-        self.assertTrue(result["sent"])
-        self.assertEqual(1245, result["file_id"])
-        self.assertEqual("https://example.planfix.ru/rest/file/?targetType=task", requests[0].full_url)
-        self.assertEqual("Bearer test-token", requests[0].get_header("Authorization"))
-        self.assertIn(b"transcribed text", requests[0].data)
-        self.assertEqual("https://example.planfix.ru/rest/task/42/comments/", requests[1].full_url)
-        comment = json.loads(requests[1].data.decode("utf-8"))
-        self.assertEqual([{"id": 1245}], comment["files"])
-        self.assertEqual("Расшифровка файла: meeting.m4a", comment["description"])
-
-    def test_result_rest_requires_api_token(self):
-        original_token = self.api.PLANFIX_API_TOKEN
-        self.api.PLANFIX_API_TOKEN = ""
-        try:
-            result = self.api.send_planfix_result_rest(
-                {"planfix_task_id": "42", "company": "example.planfix.ru"},
-                Path(self.temp_dir.name) / "result.txt",
-            )
-        finally:
-            self.api.PLANFIX_API_TOKEN = original_token
-
-        self.assertFalse(result["sent"])
-        self.assertEqual("PLANFIX_API_TOKEN is not configured", result["reason"])
-
     def test_result_webhook_sends_txt_as_multipart_file(self):
         captured = {}
 
@@ -210,7 +140,7 @@ class PlanfixCommentPayloadTests(unittest.TestCase):
         self.api.urlopen = fake_urlopen
         self.api.PLANFIX_RESULT_WEBHOOK_ID = "webhook-id"
         try:
-            result = self.api.send_planfix_result_multipart_webhook(
+            result = self.api.send_planfix_result(
                 {
                     "job_id": "job-1",
                     "planfix_task_id": "42",
@@ -237,21 +167,6 @@ class PlanfixCommentPayloadTests(unittest.TestCase):
 
         self.assertEqual("Sedaya noch - Yuriy Shatunov.txt", name)
         self.assertNotIn("?", name)
-
-    def test_result_webhook_rejects_json_webhook_configuration(self):
-        original_method = self.api.PLANFIX_RESULT_WEBHOOK_METHOD
-        self.api.PLANFIX_RESULT_WEBHOOK_METHOD = "JSON"
-        try:
-            result = self.api.send_planfix_result_multipart_webhook(
-                {"planfix_task_id": "42", "company": "example.planfix.ru"},
-                Path(self.temp_dir.name) / "result.txt",
-            )
-        finally:
-            self.api.PLANFIX_RESULT_WEBHOOK_METHOD = original_method
-
-        self.assertFalse(result["sent"])
-        self.assertIn("must be MULTIPART", result["reason"])
-
 
 if __name__ == "__main__":
     unittest.main()
