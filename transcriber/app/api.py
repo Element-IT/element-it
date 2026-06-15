@@ -1314,7 +1314,7 @@ async def planfix_audio_parse(request: Request, background_tasks: BackgroundTask
             first_scalar(payload.get("create_jobs")),
             default=bool_value(os.getenv("PLANFIX_CREATE_TRANSCRIBE_JOBS"), True),
         ),
-        "log": "/data/logs/planfix_audio_parse.log",
+        "log": str(LOGS_DIR / "planfix_audio_parse.log"),
     }
 
 

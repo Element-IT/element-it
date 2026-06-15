@@ -17,7 +17,12 @@ services:
     restart: unless-stopped
 
   transcriber:
-    build: ./transcriber
+    build:
+      context: ./transcriber
+      args:
+        BASE_IMAGE: ubuntu:22.04
+        TORCH_VERSION: 2.7.1+cpu
+        TORCH_INDEX_URL: https://download.pytorch.org/whl/cpu
     container_name: whisper_transcriber_api
     ports:
       - "${TRANSCRIBER_HOST_PORT:-7861}:7861"

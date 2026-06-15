@@ -159,6 +159,8 @@ class PlanfixCommentPayloadTests(unittest.TestCase):
         self.assertEqual("https://example.planfix.ru/webhook/file/webhook-id", request.full_url)
         self.assertTrue(request.get_header("Content-type").startswith("multipart/form-data; boundary="))
         self.assertIn(b'name="task"\r\n\r\n42', request.data)
+        self.assertNotIn(b'name="txt_file_name"', request.data)
+        self.assertNotIn(b'name="txt_base64"', request.data)
         self.assertIn(b'name="txt_file"; filename="meeting.txt"', request.data)
         self.assertIn(b"transcribed text", request.data)
 

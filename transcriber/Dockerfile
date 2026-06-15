@@ -1,4 +1,8 @@
-FROM nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04
+ARG BASE_IMAGE=nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04
+FROM ${BASE_IMAGE}
+
+ARG TORCH_VERSION=2.7.1+cu126
+ARG TORCH_INDEX_URL=https://download.pytorch.org/whl/cu126
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
@@ -12,10 +16,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 COPY requirements.txt /app/requirements.txt
-COPY constraints.txt /app/constraints.txt
 RUN python3 -m pip install --upgrade pip \
-    && python3 -m pip install torch==2.7.1+cu126 --index-url https://download.pytorch.org/whl/cu126 \
-    && python3 -m pip install -r /app/requirements.txt -c /app/constraints.txt --extra-index-url https://download.pytorch.org/whl/cu126
+    && python3 -m pip install "torch==${TORCH_VERSION}" --index-url "${TORCH_INDEX_URL}" \
+    && python3 -m pip install -r /app/requirements.txt
 COPY app /app
 
 EXPOSE 7861

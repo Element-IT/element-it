@@ -16,7 +16,11 @@
 run_all_gpu.bat
 ```
 
-GPU-образ фиксирует PyTorch на `torch==2.7.1+cu126`. Это совместимо с драйверами, которые показывают CUDA `12.7` в `nvidia-smi`; без фикса `openai-whisper` может подтянуть слишком новый PyTorch с CUDA `13.0`, и тогда `torch.cuda.is_available()` станет `False`.
+GPU-сборка фиксирует PyTorch на `torch==2.7.1+cu126`. Это совместимо с драйверами, которые показывают CUDA `12.7` в `nvidia-smi`; без фикса `openai-whisper` может подтянуть слишком новый PyTorch с CUDA `13.0`, и тогда `torch.cuda.is_available()` станет `False`.
+
+CPU-сборка использует `ubuntu:22.04` и `torch==2.7.1+cpu`, поэтому не скачивает пакеты `nvidia-cudnn`, `nvidia-cublas` и остальные CUDA-зависимости. Для неё запускай `run_all_cpu.bat` или `docker compose -f docker-compose.cpu.yml up`.
+
+Обычные `run_all_gpu.bat` и `run_all_cpu.bat` только запускают уже собранные образы. Для пересборки после изменения зависимостей или Dockerfile используй `rebuild_gpu.bat` или `rebuild_cpu.bat`.
 
 После запуска:
 
@@ -56,6 +60,42 @@ ghcr.io/dominionish/element-it/transcriber
 ```text
 TRANSCRIBER_IMAGE=ghcr.io/dominionish/element-it/transcriber:latest
 ```
+
+## Автоматический деплой на второй Windows-компьютер без Docker
+
+Для CD не нужны Docker и WSL. Workflow `.github/workflows/deploy.yml` после
+успешного `CI` обновляет нативные Python/n8n-процессы при каждом `push` в
+`main`.
+
+Скопируй на второй компьютер только файл `setup-server.ps1`, открой PowerShell
+от администратора и запусти:
+
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass
+.\setup-server.ps1
+```
+
+Установщик запросит:
+
+1. Новый registration token со страницы
+   `Settings -> Actions -> Runners -> New self-hosted runner`.
+2. Пароль для локального пользователя `github-runner`.
+
+Остальное он выполнит сам: установит Git, Python, Node.js, FFmpeg, .NET и
+Visual C++ Runtime; создаст пользователя и каталоги; скачает и проверит GitHub
+runner; зарегистрирует его как службу с меткой `deploy`; создаст `.env`; и
+откроет порты `5678` и `7861`.
+
+Следующие обновления установят зависимости только при их изменении и
+перезапустят задание `n8n-whisper-transcriber` в Планировщике заданий Windows.
+Оно автоматически запускает и контролирует:
+
+- transcriber API на порту `7861`;
+- n8n на порту `5678`.
+
+Данные находятся в `DEPLOY_DIR\data`, `DEPLOY_DIR\models` и
+`DEPLOY_DIR\n8n_data`; обновление репозитория их не удаляет. Логи процессов
+находятся в `DEPLOY_DIR\service_logs`.
 
 ## Быстрая проверка без n8n
 
@@ -210,6 +250,8 @@ PLANFIX_ALLOWED_RESULT_HOSTS=planfix.ru,.planfix.ru
 5. В основной операции найди задачу по инфоблоку `Задача`.
 6. Выбери `Добавить комментарий`.
 7. В `Прикрепить файлы` выбери `Из инфоблока -> TXT файл`.
+
+Самописную операцию запроса к OpenAI из сценария Planfix удали: готовый TXT уже сформирован сервисом и передаётся в Planfix как файл.
 
 В поле текста комментария можно указать:
 
