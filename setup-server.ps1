@@ -85,78 +85,125 @@ function Test-ServiceAccountMatches {
 function Grant-LogOnAsServiceRight {
     param([string]$UserName)
 
-    $sid = $null
-    foreach ($accountName in @(".\$UserName", "$env:COMPUTERNAME\$UserName", $UserName)) {
-        try {
-            $sid = ([Security.Principal.NTAccount]::new($accountName)).
-                Translate([Security.Principal.SecurityIdentifier]).
-                Value
-            break
-        }
-        catch {
-            $sid = $null
-        }
+    if (-not ("RunnerLsaRights" -as [type])) {
+        Add-Type -TypeDefinition @'
+using System;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+using System.Security.Principal;
+
+public static class RunnerLsaRights
+{
+    private const UInt32 POLICY_CREATE_ACCOUNT = 0x00000010;
+    private const UInt32 POLICY_LOOKUP_NAMES = 0x00000800;
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct LSA_OBJECT_ATTRIBUTES
+    {
+        public UInt32 Length;
+        public IntPtr RootDirectory;
+        public IntPtr ObjectName;
+        public UInt32 Attributes;
+        public IntPtr SecurityDescriptor;
+        public IntPtr SecurityQualityOfService;
     }
 
-    if (-not $sid) {
-        throw "Could not resolve Windows account '$UserName' to a SID."
+    [StructLayout(LayoutKind.Sequential)]
+    private struct LSA_UNICODE_STRING
+    {
+        public UInt16 Length;
+        public UInt16 MaximumLength;
+        public IntPtr Buffer;
     }
 
-    $tempDirectory = Join-Path $env:TEMP ("runner-service-rights-" + [guid]::NewGuid().ToString("N"))
-    $exportPath = Join-Path $tempDirectory "current.inf"
-    $importPath = Join-Path $tempDirectory "grant.inf"
-    $databasePath = Join-Path $tempDirectory "grant.sdb"
-    New-Item -ItemType Directory -Force -Path $tempDirectory | Out-Null
+    [DllImport("advapi32.dll", PreserveSig = true)]
+    private static extern UInt32 LsaOpenPolicy(
+        IntPtr SystemName,
+        ref LSA_OBJECT_ATTRIBUTES ObjectAttributes,
+        UInt32 DesiredAccess,
+        out IntPtr PolicyHandle);
 
+    [DllImport("advapi32.dll", PreserveSig = true)]
+    private static extern UInt32 LsaAddAccountRights(
+        IntPtr PolicyHandle,
+        IntPtr AccountSid,
+        LSA_UNICODE_STRING[] UserRights,
+        UInt32 CountOfRights);
+
+    [DllImport("advapi32.dll", PreserveSig = true)]
+    private static extern UInt32 LsaClose(IntPtr ObjectHandle);
+
+    [DllImport("advapi32.dll", PreserveSig = true)]
+    private static extern UInt32 LsaNtStatusToWinError(UInt32 Status);
+
+    public static void AddAccountRight(string accountName, string rightName)
+    {
+        SecurityIdentifier sid = (SecurityIdentifier)new NTAccount(accountName).
+            Translate(typeof(SecurityIdentifier));
+        byte[] sidBytes = new byte[sid.BinaryLength];
+        sid.GetBinaryForm(sidBytes, 0);
+
+        IntPtr sidPointer = IntPtr.Zero;
+        IntPtr policyHandle = IntPtr.Zero;
+        IntPtr rightPointer = IntPtr.Zero;
+
+        try
+        {
+            sidPointer = Marshal.AllocHGlobal(sidBytes.Length);
+            Marshal.Copy(sidBytes, 0, sidPointer, sidBytes.Length);
+
+            LSA_OBJECT_ATTRIBUTES objectAttributes = new LSA_OBJECT_ATTRIBUTES();
+            objectAttributes.Length = (UInt32)Marshal.SizeOf(typeof(LSA_OBJECT_ATTRIBUTES));
+
+            UInt32 status = LsaOpenPolicy(
+                IntPtr.Zero,
+                ref objectAttributes,
+                POLICY_CREATE_ACCOUNT | POLICY_LOOKUP_NAMES,
+                out policyHandle);
+            if (status != 0)
+            {
+                throw new Win32Exception((int)LsaNtStatusToWinError(status));
+            }
+
+            rightPointer = Marshal.StringToHGlobalUni(rightName);
+            LSA_UNICODE_STRING[] rights = new LSA_UNICODE_STRING[1];
+            rights[0].Buffer = rightPointer;
+            rights[0].Length = (UInt16)(rightName.Length * 2);
+            rights[0].MaximumLength = (UInt16)((rightName.Length + 1) * 2);
+
+            status = LsaAddAccountRights(policyHandle, sidPointer, rights, 1);
+            if (status != 0)
+            {
+                throw new Win32Exception((int)LsaNtStatusToWinError(status));
+            }
+        }
+        finally
+        {
+            if (rightPointer != IntPtr.Zero)
+            {
+                Marshal.FreeHGlobal(rightPointer);
+            }
+            if (policyHandle != IntPtr.Zero)
+            {
+                LsaClose(policyHandle);
+            }
+            if (sidPointer != IntPtr.Zero)
+            {
+                Marshal.FreeHGlobal(sidPointer);
+            }
+        }
+    }
+}
+'@
+    }
+
+    $accountName = "$env:COMPUTERNAME\$UserName"
     try {
-        $exportOutput = & secedit.exe /export /cfg $exportPath /areas USER_RIGHTS 2>&1
-        if ($LASTEXITCODE -ne 0) {
-            $exportOutput | ForEach-Object { Write-Host $_ }
-            throw "Could not export local security policy to grant Log on as a service."
-        }
-
-        $content = Get-Content -LiteralPath $exportPath -Raw -Encoding Unicode
-        $currentLine = $content -split "\r?\n" |
-            Where-Object { $_ -match "^\s*SeServiceLogonRight\s*=" } |
-            Select-Object -First 1
-
-        $currentEntries = @()
-        if ($currentLine) {
-            $currentEntries = @(
-                ($currentLine -replace "^\s*SeServiceLogonRight\s*=\s*", "") -split "," |
-                    ForEach-Object { $_.Trim() } |
-                    Where-Object { $_ }
-            )
-        }
-
-        $sidEntry = "*$sid"
-        if ($currentEntries -contains $sidEntry) {
-            Write-Host ".\$UserName already has 'Log on as a service'."
-            return
-        }
-
-        $rights = @($currentEntries + $sidEntry) | Select-Object -Unique
-        $importLines = @(
-            "[Unicode]",
-            "Unicode=yes",
-            "[Version]",
-            'signature="$CHICAGO$"',
-            "Revision=1",
-            "[Privilege Rights]",
-            "SeServiceLogonRight = $($rights -join ',')"
-        )
-        Set-Content -LiteralPath $importPath -Value $importLines -Encoding Unicode
-
-        $configureOutput = & secedit.exe /configure /db $databasePath /cfg $importPath /areas USER_RIGHTS 2>&1
-        if ($LASTEXITCODE -ne 0) {
-            $configureOutput | ForEach-Object { Write-Host $_ }
-            throw "Could not grant 'Log on as a service' to .\$UserName."
-        }
-
+        [RunnerLsaRights]::AddAccountRight($accountName, "SeServiceLogonRight")
         Write-Host "Granted 'Log on as a service' to .\$UserName."
     }
-    finally {
-        Remove-Item -LiteralPath $tempDirectory -Recurse -Force -ErrorAction SilentlyContinue
+    catch {
+        throw "Could not grant 'Log on as a service' to .\$UserName. Open secpol.msc -> Local Policies -> User Rights Assignment -> Log on as a service, add .\$UserName, then run setup-server.ps1 again. Details: $($_.Exception.Message)"
     }
 }
 
