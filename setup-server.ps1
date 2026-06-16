@@ -596,6 +596,7 @@ Invoke-WslRoot -Script @"
 set -euo pipefail
 DEPLOY_DIR=$(Quote-Bash $WslDeployDirectory)
 mkdir -p "`$DEPLOY_DIR"/data "`$DEPLOY_DIR"/models "`$DEPLOY_DIR"/n8n_data
+chown -R 1000:1000 "`$DEPLOY_DIR"/n8n_data
 if [ ! -f "`$DEPLOY_DIR/.env" ]; then
   echo '$encodedEnv' | base64 -d >"`$DEPLOY_DIR/.env"
   chmod 600 "`$DEPLOY_DIR/.env"

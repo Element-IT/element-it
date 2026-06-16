@@ -104,6 +104,7 @@ Invoke-WslRoot -Script @"
 set -euo pipefail
 DEPLOY_DIR=$(Quote-Bash $WslDeployDir)
 mkdir -p "`$DEPLOY_DIR"/data "`$DEPLOY_DIR"/models "`$DEPLOY_DIR"/n8n_data
+chown -R 1000:1000 "`$DEPLOY_DIR"/n8n_data
 "@
 
 $deployUnc = ConvertTo-WslUncPath -LinuxPath $WslDeployDir
