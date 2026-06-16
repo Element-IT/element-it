@@ -143,6 +143,49 @@ function Invoke-WslRoot {
     }
 }
 
+function Invoke-WslUpdateBestEffort {
+    Write-Host "Updating WSL if Windows can reach the update source..."
+
+    $commands = @(
+        @("--update", "--web-download"),
+        @("--update")
+    )
+
+    foreach ($arguments in $commands) {
+        $output = & wsl.exe @arguments 2>&1
+        $exitCode = $LASTEXITCODE
+        $output | ForEach-Object { Write-Host $_ }
+
+        if ($exitCode -eq 0) {
+            return
+        }
+
+        $text = $output -join "`n"
+        if ($text -match "(?i)restart|reboot|перезагруз") {
+            Register-ResumeTaskAndRestart
+        }
+    }
+
+    Write-Host "WSL update did not complete. Continuing because the installed WSL version may still be usable." -ForegroundColor Yellow
+}
+
+function Set-WslDefaultVersionBestEffort {
+    $output = & wsl.exe --set-default-version 2 2>&1
+    $exitCode = $LASTEXITCODE
+    $output | ForEach-Object { Write-Host $_ }
+
+    if ($exitCode -eq 0) {
+        return
+    }
+
+    $text = $output -join "`n"
+    if ($text -match "(?i)restart|reboot|перезагруз") {
+        Register-ResumeTaskAndRestart
+    }
+
+    Write-Host "Could not set the default WSL version yet. Continuing; distro startup will verify WSL2 readiness." -ForegroundColor Yellow
+}
+
 function Get-WslDistros {
     $output = & wsl.exe -l -q 2>$null
     if ($LASTEXITCODE -ne 0) {
@@ -171,18 +214,35 @@ function Ensure-WslDistro {
     $distros = Get-WslDistros
     if ($distros -notcontains $WslDistro) {
         Write-Host "Installing WSL distro $WslDistro..."
-        $installOutput = & wsl.exe --install -d $WslDistro --no-launch 2>&1
-        $exitCode = $LASTEXITCODE
-        $installText = $installOutput -join "`n"
-        $installOutput | ForEach-Object { Write-Host $_ }
+        $installResults = @()
+        $installCommands = @(
+            @("--install", "-d", $WslDistro, "--no-launch", "--web-download"),
+            @("--install", "-d", $WslDistro, "--no-launch")
+        )
+
+        foreach ($arguments in $installCommands) {
+            $installOutput = & wsl.exe @arguments 2>&1
+            $exitCode = $LASTEXITCODE
+            $installText = $installOutput -join "`n"
+            $installResults += $installText
+            $installOutput | ForEach-Object { Write-Host $_ }
+
+            $distros = Get-WslDistros
+            if ($exitCode -eq 0 -or $distros -contains $WslDistro -or $installText -match "(?i)already|exist|уже|существ") {
+                break
+            }
+
+            if ($installText -match "(?i)restart|reboot|перезагруз") {
+                Register-ResumeTaskAndRestart
+            }
+        }
 
         $distros = Get-WslDistros
         if (
-            $exitCode -ne 0 -and
             $distros -notcontains $WslDistro -and
-            $installText -notmatch "(?i)already|exist|уже|существ"
+            (($installResults -join "`n") -notmatch "(?i)already|exist|уже|существ")
         ) {
-            if ($installText -match "(?i)restart|reboot|перезагруз") {
+            if (($installResults -join "`n") -match "(?i)restart|reboot|перезагруз") {
                 Register-ResumeTaskAndRestart
             }
 
@@ -279,8 +339,8 @@ if ($needsRestart -and -not $ResumeAfterReboot) {
     Register-ResumeTaskAndRestart
 }
 
-Invoke-Checked -FilePath "wsl.exe" -ArgumentList @("--update")
-Invoke-Checked -FilePath "wsl.exe" -ArgumentList @("--set-default-version", "2")
+Invoke-WslUpdateBestEffort
+Set-WslDefaultVersionBestEffort
 
 Ensure-WslDistro
 
