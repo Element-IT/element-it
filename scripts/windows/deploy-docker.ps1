@@ -44,6 +44,54 @@ function ConvertTo-WslUncPath {
     return "\\wsl.localhost\$WslDistro\$relative"
 }
 
+function Get-WslIpAddress {
+    $output = & wsl.exe -d $WslDistro -u root -- bash -lc "hostname -I" 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        $output | ForEach-Object { Write-Host $_ }
+        throw "Could not get WSL IP address."
+    }
+
+    $text = ($output -join " ") -replace "`0", ""
+    $ip = [regex]::Match($text, "\b(?:\d{1,3}\.){3}\d{1,3}\b").Value
+    if ([string]::IsNullOrWhiteSpace($ip)) {
+        throw "Could not parse WSL IP address from: $text"
+    }
+
+    return $ip
+}
+
+function Set-WindowsPortProxy {
+    param(
+        [string]$WslIpAddress,
+        [int[]]$Ports
+    )
+
+    Write-Host "Configuring Windows localhost port proxy to WSL IP $WslIpAddress..."
+    foreach ($port in $Ports) {
+        & netsh.exe interface portproxy delete v4tov4 listenaddress=0.0.0.0 listenport=$port | Out-Null
+        & netsh.exe interface portproxy add v4tov4 listenaddress=0.0.0.0 listenport=$port connectaddress=$WslIpAddress connectport=$port | Out-Host
+        if ($LASTEXITCODE -ne 0) {
+            throw "Could not configure Windows IPv4 port proxy for port $port."
+        }
+
+        & netsh.exe interface portproxy delete v6tov4 listenaddress=::1 listenport=$port | Out-Null
+        & netsh.exe interface portproxy add v6tov4 listenaddress=::1 listenport=$port connectaddress=$WslIpAddress connectport=$port | Out-Host
+        if ($LASTEXITCODE -ne 0) {
+            throw "Could not configure Windows IPv6 localhost port proxy for port $port."
+        }
+
+        $ruleName = "n8n whisper WSL port $port"
+        if (-not (Get-NetFirewallRule -DisplayName $ruleName -ErrorAction SilentlyContinue)) {
+            New-NetFirewallRule `
+                -DisplayName $ruleName `
+                -Direction Inbound `
+                -Protocol TCP `
+                -LocalPort $port `
+                -Action Allow | Out-Null
+        }
+    }
+}
+
 Write-Host "Deploying $Repository@$DeploySha to ${WslDistro}:$WslDeployDir"
 
 $nativeTask = Get-ScheduledTask -TaskName "n8n-whisper-transcriber" -ErrorAction SilentlyContinue
@@ -170,4 +218,6 @@ log "Deployment completed"
 "@
 
 Invoke-WslRoot -Script $script
+$wslIpAddress = Get-WslIpAddress
+Set-WindowsPortProxy -WslIpAddress $wslIpAddress -Ports @(5678, 7861)
 Write-Host "Docker deployment is healthy: http://localhost:7861/health"
