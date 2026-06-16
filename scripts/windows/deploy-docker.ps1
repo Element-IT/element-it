@@ -29,8 +29,9 @@ function Quote-Bash {
 function Invoke-WslRoot {
     param([string]$Script)
 
+    $Script = $Script -replace "`r`n", "`n" -replace "`r", "`n"
     $encoded = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($Script))
-    & wsl.exe -d $WslDistro -u root -- bash -lc "set -euo pipefail; echo $encoded | base64 -d | bash"
+    & wsl.exe -d $WslDistro -u root -- bash -lc "set -euo pipefail; printf '%s' '$encoded' | base64 -d | bash"
     if ($LASTEXITCODE -ne 0) {
         throw "WSL command failed with exit code $LASTEXITCODE."
     }
