@@ -1071,11 +1071,19 @@ def build_planfix_result_webhook_url(job: dict) -> str:
 def send_planfix_result(job: dict, txt_path: Path) -> dict:
     webhook_url = build_planfix_result_webhook_url(job)
     if not webhook_url:
-        return {
+        result = {
             "sent": False,
             "mode": "multipart_webhook",
             "reason": "PLANFIX_RESULT_WEBHOOK_ID is not configured or webhook URL is invalid",
         }
+        planfix_log(
+            "TXT-файл не отправлен в Planfix: webhook результата не настроен",
+            **result,
+            task_id=job.get("planfix_task_id"),
+            job_id=job.get("job_id"),
+            company=job.get("company", ""),
+        )
+        return result
 
     txt_path = Path(txt_path)
     upload_name = planfix_result_file_name(job, txt_path)
