@@ -185,6 +185,9 @@ if [ ! -f "`$DEPLOY_DIR/.env" ]; then
   printf '%s' '$encodedEnv' | base64 -d >"`$DEPLOY_DIR/.env"
   chmod 600 "`$DEPLOY_DIR/.env"
 fi
+if ! grep -q '^PLANFIX_TRANSCRIBE_MODEL=' "`$DEPLOY_DIR/.env"; then
+  printf '\nPLANFIX_TRANSCRIBE_MODEL=small\n' >>"`$DEPLOY_DIR/.env"
+fi
 "@
 
 $repositoryLower = $Repository.ToLowerInvariant()

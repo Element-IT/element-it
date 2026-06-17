@@ -54,6 +54,9 @@ PLANFIX_RESULT_WEBHOOK_ID = os.getenv("PLANFIX_RESULT_WEBHOOK_ID", "").strip().s
 PLANFIX_RESULT_WEBHOOK_URL = os.getenv("PLANFIX_RESULT_WEBHOOK_URL", "").strip()
 PLANFIX_RESULT_FILE_FIELD = os.getenv("PLANFIX_RESULT_FILE_FIELD", "txt_file").strip() or "txt_file"
 PLANFIX_RESULT_TIMEOUT = int(os.getenv("PLANFIX_RESULT_TIMEOUT", "120"))
+PLANFIX_TRANSCRIBE_MODEL = os.getenv("PLANFIX_TRANSCRIBE_MODEL", "small").strip().lower()
+if PLANFIX_TRANSCRIBE_MODEL not in {"small", "medium", "large-v3"}:
+    PLANFIX_TRANSCRIBE_MODEL = "small"
 TRUTHY = {"1", "true", "yes", "y", "on", "да"}
 PLANFIX_FILE_FIELD_KEYS = {
     "files",
@@ -789,10 +792,14 @@ def queue_planfix_transcription(input_path: Path, task_id: str, company: str, so
     job_id = uuid.uuid4().hex[:12]
     output_name = safe_name(f"{company}_{task_id}_{Path(source_name).stem}")[:120]
     project = first_present(payload, ["project", "project_id", "projectId", "Проект"])
+    requested_model = first_present(payload, ["model", "whisper_model", "transcribe_model"], default=PLANFIX_TRANSCRIBE_MODEL)
+    model = str(requested_model).strip().lower()
+    if model not in {"small", "medium", "large-v3"}:
+        model = PLANFIX_TRANSCRIBE_MODEL
     job = {
         "job_id": job_id,
         "input_path": str(input_path),
-        "model": "medium",
+        "model": model,
         "chunk_minutes": 6,
         "enhance_audio": True,
         "output_name": output_name,
