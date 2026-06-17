@@ -105,14 +105,40 @@ function Set-WindowsPortProxy {
 }
 
 function Start-WslKeepAlive {
-    Invoke-WslRoot -Script @'
-set -euo pipefail
-if ! pgrep -f n8n-whisper-wsl-keepalive >/dev/null 2>&1; then
-  nohup bash -c 'exec -a n8n-whisper-wsl-keepalive sleep infinity' >/dev/null 2>&1 &
-fi
-'@
+    $marker = "n8n-whisper-wsl-keepalive"
+    $existing = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+        Where-Object {
+            $_.ProcessId -ne $PID -and
+            $_.CommandLine -like "*$marker*" -and
+            $_.CommandLine -like "*$WslDistro*"
+        } |
+        Select-Object -First 1
 
-    Write-Host "WSL keep-alive process is running for $WslDistro."
+    if ($existing) {
+        Write-Host "WSL keep-alive process is already running for $WslDistro (PID $($existing.ProcessId))."
+        return
+    }
+
+    $command = "& wsl.exe -d '$WslDistro' -u root -- bash -lc 'exec -a $marker sleep infinity'"
+    $arguments = "-NoProfile -ExecutionPolicy Bypass -Command `"$command`""
+    $oldTrackingId = $env:RUNNER_TRACKING_ID
+
+    try {
+        Remove-Item Env:RUNNER_TRACKING_ID -ErrorAction SilentlyContinue
+        $process = Start-Process `
+            -FilePath "powershell.exe" `
+            -ArgumentList $arguments `
+            -WindowStyle Hidden `
+            -PassThru
+    }
+    finally {
+        if ($oldTrackingId) {
+            $env:RUNNER_TRACKING_ID = $oldTrackingId
+        }
+    }
+
+    Start-Sleep -Seconds 2
+    Write-Host "WSL keep-alive process started for $WslDistro (PID $($process.Id))."
 }
 
 Write-Host "Deploying $Repository@$DeploySha to ${WslDistro}:$WslDeployDir"
